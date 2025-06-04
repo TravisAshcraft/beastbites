@@ -64,23 +64,49 @@ class _SignUpScreenState extends State<SignUpScreen> {
         data: {'full_name': name},
       );
 
-      if (response.user == null) {
-        setState(() {
-          _errorText = 'Sign-up failed. Try again.';
-          _isLoading = false;
-        });
-        return;
-      }
-
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('parentName', name);
       await prefs.setString('parentEmail', email);
       await prefs.setBool('isSignedUp', true);
 
-      Navigator.of(context).pushReplacementNamed('/login');
+      if (response.user == null && response.session == null) {
+        // This could be due to over_email_send_rate_limit
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("You've already requested a confirmation email. Please check your inbox."),
+          ),
+        );
+        Navigator.of(context).pushReplacementNamed('/confirm-email');
+        return;
+      }
+
+      if (response.session == null) {
+        // 🚀 Email confirmation required
+        Navigator.of(context).pushReplacementNamed('/confirm-email');
+      } else {
+        // ✅ Immediate login success
+        Navigator.of(context).pushReplacementNamed('/home');
+      }
+    } on AuthApiException catch (e) {
+      if (e.statusCode == 429 && e.message.contains('over_email_send_rate_limit')) {
+        // 🔔 Non-breaking rate limit warning
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("You're sending emails too quickly. Please wait and check your inbox."),
+          ),
+        );
+        Navigator.of(context).pushReplacementNamed('/confirm-email');
+      } else {
+        setState(() {
+          _errorText = 'Unexpected error: ${e.message}';
+        });
+      }
     } catch (e) {
       setState(() {
         _errorText = 'Unexpected error: $e';
+      });
+    } finally {
+      setState(() {
         _isLoading = false;
       });
     }
