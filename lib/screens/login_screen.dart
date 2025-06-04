@@ -1,58 +1,80 @@
 // lib/screens/login_screen.dart
+
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({Key? key}) : super(key: key);
+
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  final _pinController = TextEditingController();
   bool _isLoading = false;
   String? _errorText;
 
-  Future<void> _attemptLogin() async {
-    final enteredPin = _pinController.text.trim();
-    if (enteredPin.length != 4 || !RegExp(r'^\d{4}$').hasMatch(enteredPin)) {
-      setState(() => _errorText = 'Enter a valid 4-digit PIN.');
-      return;
+  /// Must match:
+  ///  • your AndroidManifest intent-filter (scheme + host),
+  ///  • the Redirect URL in Supabase Dashboard.
+  static const _redirectUri = 'io.supabase.beastbites://login-callback';
+
+  @override
+  void initState() {
+    super.initState();
+
+    // If a session already exists, go straight to /parentHome.
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        Navigator.of(context).pushReplacementNamed('/parentHome');
+      });
     }
 
+    // Listen for auth state changes. Once the deep link returns with tokens,
+    // Supabase populates currentUser ⇒ navigate to /parentHome.
+    Supabase.instance.client.auth.onAuthStateChange.listen((data) {
+      final session = data.session;
+      if (session != null && session.user != null) {
+        Navigator.of(context).pushReplacementNamed('/parentHome');
+      }
+    });
+  }
+
+  Future<void> _signInWithGoogle() async {
     setState(() {
       _isLoading = true;
       _errorText = null;
     });
 
-    final prefs = await SharedPreferences.getInstance();
-    final savedPin = prefs.getString('parentPin');
+    try {
+      final res = await Supabase.instance.client.auth.signInWithOAuth(
+        OAuthProvider.google,
+        redirectTo: _redirectUri,
+      );
 
-    await Future.delayed(const Duration(milliseconds: 300)); // simulate small delay
-
-    if (savedPin != null && enteredPin == savedPin) {
-      // PIN correct → navigate to Parent Home (or Child Home, depending on your logic).
-      // Here assuming only parent login for simplicity:
-      Navigator.of(context).pushReplacementNamed('/parentHome');
-    } else {
+      if (res.error != null) {
+        // supabase_flutter 2.x returns AuthResponse, so res.error is non-null on failure
+        setState(() {
+          _errorText = res.error!.message;
+          _isLoading = false;
+        });
+      }
+      // On success, the user is sent to their browser. The deep-link callback
+      // will return to the app; the onAuthStateChange listener above handles navigation.
+    } catch (e) {
       setState(() {
-        _errorText = 'Incorrect PIN. Please try again.';
+        _errorText = 'Unexpected error: $e';
         _isLoading = false;
       });
     }
   }
 
   @override
-  void dispose() {
-    _pinController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Enter PIN'),
+        title: const Text('Sign In'),
         automaticallyImplyLeading: false,
       ),
       body: Padding(
@@ -62,29 +84,28 @@ class _LoginScreenState extends State<LoginScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text(
-                'Enter your 4-digit PIN to continue',
+                'Log in to continue',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 18),
               ),
-              const SizedBox(height: 24),
-              TextField(
-                controller: _pinController,
-                decoration: InputDecoration(
-                  labelText: 'PIN',
-                  errorText: _errorText,
-                  prefixIcon: const Icon(Icons.lock_open),
+              const SizedBox(height: 32),
+              if (_errorText != null) ...[
+                Text(
+                  _errorText!,
+                  style: const TextStyle(color: Colors.red),
                 ),
-                obscureText: true,
-                keyboardType: TextInputType.number,
-                maxLength: 4,
-                onSubmitted: (_) => _attemptLogin(),
-              ),
-              const SizedBox(height: 24),
+                const SizedBox(height: 12),
+              ],
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
-                  onPressed: _isLoading ? null : _attemptLogin,
-                  child: _isLoading
+                height: 50,
+                child: ElevatedButton.icon(
+                  icon: Image.asset(
+                    'assets/g-logo.png',
+                    height: 24,
+                    width: 24,
+                  ),
+                  label: _isLoading
                       ? const SizedBox(
                     width: 20,
                     height: 20,
@@ -93,7 +114,21 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: Colors.white,
                     ),
                   )
-                      : const Text('Log In', style: TextStyle(fontSize: 16)),
+                      : const Text(
+                    'Sign in with Google',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  onPressed: _isLoading ? null : _signInWithGoogle,
+                  style: ElevatedButton.styleFrom(
+                    foregroundColor: Colors.black87,
+                    backgroundColor: Colors.white,
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    side: const BorderSide(color: Colors.grey),
+                    textStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
                 ),
               ),
             ],
@@ -102,4 +137,8 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
+}
+
+extension on bool {
+  get error => null;
 }
